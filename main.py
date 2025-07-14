@@ -167,11 +167,18 @@ async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(result, parse_mode="Markdown")
     del context.user_data["awaiting_custom_range"]
 
-# Dummy server for Render port binding requirement
+# Updated server handler with HEAD support
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.end_headers()
         self.wfile.write("✅ Bot is alive!".encode('utf-8'))
+    
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.end_headers()
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -179,7 +186,7 @@ def run_dummy_server():
     server.serve_forever()
 
 if __name__ == "__main__":
-    # Start dummy web server in a separate thread
+    # Start web server in a separate thread
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = Application.builder().token(TOKEN).build()
