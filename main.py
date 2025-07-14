@@ -2,8 +2,6 @@ import os
 import re
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from dotenv import load_dotenv
-load_dotenv()
 from datetime import datetime, timedelta, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -173,8 +171,9 @@ async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"✅ Bot is alive!")
+        self.wfile.write("✅ Bot is alive!".encode('utf-8'))
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
