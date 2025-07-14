@@ -1,5 +1,7 @@
 import os
 import re
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 load_dotenv()
 from datetime import datetime, timedelta, timezone
@@ -167,15 +169,28 @@ async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(result, parse_mode="Markdown")
     del context.user_data["awaiting_custom_range"]
 
+# Dummy server for Render port binding requirement
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"✅ Bot is alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('', port), HealthCheckHandler)
+    server.serve_forever()
+
 if __name__ == "__main__":
+    # Start dummy web server in a separate thread
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
-
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_range))
 
     print("Bot is running...")
-
     app.run_polling()
