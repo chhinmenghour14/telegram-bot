@@ -19,20 +19,21 @@ UTC_PLUS_7 = timezone(timedelta(hours=7))
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
-# In-memory storage: {chat_id: [message_data]}
+# In-memory message store
 message_store = {}
 
+# Extract numbers when messages are received
 async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Skip storing if awaiting custom input
+    if context.user_data.get("awaiting_custom_range"):
+        return
+
     text = update.message.text
     chat_id = update.message.chat_id
 
-    # Extract numbers from all formats
+    # Extract number patterns
     numbers = []
-
-    # Pattern 1: $20 or $3.79 style
     numbers += re.findall(r"\$\s*([0-9]+(?:\.[0-9]{1,2})?)", text)
-
-    # Pattern 2: Khmer style - ទទួលប្រាក់ចំនួន 1.23 ដុល្លារ or បានទទួល 28.80 ដុល្លារ
     numbers += re.findall(r"(?:ទទួល(?:ប្រាក់ចំនួន)?\s*)([0-9]+(?:\.[0-9]{1,2})?)\s*ដុល្លារ", text)
 
     if not numbers:
@@ -48,6 +49,7 @@ async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     message_store[chat_id].append(message_data)
 
+# Start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("ថ្ងៃនេះ 6:00AM-1:30PM", callback_data="today_morning")],
@@ -63,6 +65,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+# Button callback handler
 async def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
@@ -87,13 +90,18 @@ async def button_handler(update: Update, context: CallbackContext):
         start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         end_dt = (start_dt + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
         range_name = "ខែនេះ"
-    else:
+    elif query.data == "custom":
         await query.edit_message_text(
-            "📅 សូមផ្ញើចន្លោះកាលបរិច្ឆេទជាទម្រង់:\nឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nឧទាហរណ៍: 2025-07-01 00:00 to 2025-07-31 23:59"
+            "📅 សូមផ្ញើចន្លោះកាលបរិច្ឆេទជាទម្រង់:\n"
+            "ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\n"
+            "ឧទាហរណ៍: 2025-07-01 00:00 to 2025-07-31 23:59"
         )
         context.user_data["awaiting_custom_range"] = True
         return
+    else:
+        return
 
+    # Sum logic
     total = 0
     count = 0
     if chat_id in message_store:
@@ -121,10 +129,10 @@ async def button_handler(update: Update, context: CallbackContext):
 
     await query.edit_message_text(result, parse_mode="Markdown")
 
+# Custom range text input
 async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Skip if not awaiting custom range input
-    if "awaiting_custom_range" not in context.user_data:
-        return  # Let other handlers process this message
+    if not context.user_data.get("awaiting_custom_range"):
+        return
 
     text = update.message.text
     chat_id = update.message.chat_id
@@ -137,10 +145,8 @@ async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE
         start_dt = datetime.strptime(parts[0], "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
         end_dt = datetime.strptime(parts[1], "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
     except Exception as e:
-        await update.message.reply_text(
-            f"❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមប្រើ: ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nកំហុស: {str(e)}"
-        )
-        return  # Keep the state for retry
+        await update.message.reply_text(f"❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមប្រើ:\nឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nកំហុស: {str(e)}")
+        return
 
     total = 0
     count = 0
@@ -170,14 +176,14 @@ async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(result, parse_mode="Markdown")
     del context.user_data["awaiting_custom_range"]
 
-# Updated server handler with HEAD support
+# Simple health check server
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
         self.wfile.write("✅ Bot is alive!".encode('utf-8'))
-    
+
     def do_HEAD(self):
         self.send_response(200)
         self.send_header('Content-type', 'text/plain; charset=utf-8')
@@ -188,16 +194,18 @@ def run_dummy_server():
     server = HTTPServer(('', port), HealthCheckHandler)
     server.serve_forever()
 
+# Main bot runner
 if __name__ == "__main__":
-    # Start web server in a separate thread
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message))
+
+    # 👇 Custom input must be handled first
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_range))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message))
 
     print("Bot is running...")
     app.run_polling()
