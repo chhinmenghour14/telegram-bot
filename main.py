@@ -122,8 +122,9 @@ async def button_handler(update: Update, context: CallbackContext):
     await query.edit_message_text(result, parse_mode="Markdown")
 
 async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Skip if not awaiting custom range input
     if "awaiting_custom_range" not in context.user_data:
-        return
+        return  # Let other handlers process this message
 
     text = update.message.text
     chat_id = update.message.chat_id
@@ -136,8 +137,10 @@ async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE
         start_dt = datetime.strptime(parts[0], "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
         end_dt = datetime.strptime(parts[1], "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
     except Exception as e:
-        await update.message.reply_text(f"❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមប្រើ: ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nកំហុស: {str(e)}")
-        return
+        await update.message.reply_text(
+            f"❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមប្រើ: ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nកំហុស: {str(e)}"
+        )
+        return  # Keep the state for retry
 
     total = 0
     count = 0
