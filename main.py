@@ -3,13 +3,7 @@ import re
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timedelta, timezone
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -19,7 +13,6 @@ from telegram.ext import (
     ContextTypes,
     CallbackContext
 )
-from telegram.constants import ParseMode
 
 # Set your timezone offset here (UTC+7)
 UTC_PLUS_7 = timezone(timedelta(hours=7))
@@ -94,17 +87,11 @@ async def button_handler(update: Update, context: CallbackContext):
         start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         end_dt = (start_dt + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
         range_name = "ខែនេះ"
-    elif query.data == "custom":
-        await query.edit_message_text(
-            "📅 សូមជ្រើសរើសថ្ងៃចាប់ផ្តើម:",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("ជ្រើសថ្ងៃ", callback_data="start_date_picker")]
-            ])
-        )
-        context.user_data["date_range_stage"] = "start_date"
-        return
     else:
-        await query.edit_message_text("❌ ជម្រើសមិនត្រឹមត្រូវ។")
+        await query.edit_message_text(
+            "📅 សូមផ្ញើចន្លោះកាលបរិច្ឆេទជាទម្រង់:\nឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nឧទាហរណ៍: 2025-07-01 00:00 to 2025-07-31 23:59"
+        )
+        context.user_data["awaiting_custom_range"] = True
         return
 
     total = 0
@@ -132,146 +119,55 @@ async def button_handler(update: Update, context: CallbackContext):
             f"• ផលបូកសរុប: {total:.2f}"
         )
 
-    await query.edit_message_text(result, parse_mode=ParseMode.MARKDOWN)
+    await query.edit_message_text(result, parse_mode="Markdown")
 
-async def date_picker_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == "start_date_picker":
-        await query.edit_message_text(
-            "📅 សូមផ្ញើថ្ងៃចាប់ផ្តើមជាទម្រង់:\nឆ្នាំ-ខែ-ថ្ងៃ\nឧទាហរណ៍: 2025-07-01"
-        )
-        context.user_data["date_range_stage"] = "start_date"
-    elif query.data == "end_date_picker":
-        await query.edit_message_text(
-            "📅 សូមផ្ញើថ្ងៃបញ្ចប់ជាទម្រង់:\nឆ្នាំ-ខែ-ថ្ងៃ\nឧទាហរណ៍: 2025-07-31"
-        )
-        context.user_data["date_range_stage"] = "end_date"
-
-async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # First store the message if it contains numbers
-    await store_message(update, context)
-    
-    # Then handle date/time selection if in progress
-    if "date_range_stage" not in context.user_data:
+async def handle_custom_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "awaiting_custom_range" not in context.user_data:
         return
 
-    text = update.message.text.strip()
-    stage = context.user_data["date_range_stage"]
+    text = update.message.text
+    chat_id = update.message.chat_id
 
     try:
-        if stage == "start_date":
-            # Validate date format
-            datetime.strptime(text, "%Y-%m-%d")
-            context.user_data["start_date"] = text
-            await update.message.reply_text(
-                "⏰ ឥឡូវសូមផ្ញើម៉ោងចាប់ផ្តើម (HH:MM):\nឧទាហរណ៍: 08:30",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[
-                        [KeyboardButton(text="06:00"), KeyboardButton(text="12:00")],
-                        [KeyboardButton(text="13:30"), KeyboardButton(text="18:00")],
-                        [KeyboardButton(text="00:00"), KeyboardButton(text="23:59")]
-                    ],
-                    resize_keyboard=True,
-                    one_time_keyboard=True
-                )
-            )
-            context.user_data["date_range_stage"] = "start_time"
+        parts = [p.strip() for p in text.split("to")]
+        if len(parts) != 2:
+            raise ValueError("Missing 'to' separator")
 
-        elif stage == "start_time":
-            # Validate time format
-            datetime.strptime(text, "%H:%M")
-            context.user_data["start_time"] = text
-            full_start = f"{context.user_data['start_date']} {text}"
-            context.user_data["full_start"] = datetime.strptime(full_start, "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
-            
-            # Ask for end date
-            await update.message.reply_text(
-                "📅 សូមផ្ញើថ្ងៃបញ្ចប់ជាទម្រង់:\nឆ្នាំ-ខែ-ថ្ងៃ\nឧទាហរណ៍: 2025-07-31",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[[KeyboardButton(text="ជ្រើសថ្ងៃ")]],
-                    resize_keyboard=True,
-                    one_time_keyboard=True
-                )
-            )
-            context.user_data["date_range_stage"] = "end_date"
+        start_dt = datetime.strptime(parts[0], "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
+        end_dt = datetime.strptime(parts[1], "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
+    except Exception as e:
+        await update.message.reply_text(f"❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមប្រើ: ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី to ឆ្នាំ-ខែ-ថ្ងៃ ម៉ោង:នាទី\nកំហុស: {str(e)}")
+        return
 
-        elif stage == "end_date":
-            # Validate date format
-            datetime.strptime(text, "%Y-%m-%d")
-            context.user_data["end_date"] = text
-            await update.message.reply_text(
-                "⏰ ឥឡូវសូមផ្ញើម៉ោងបញ្ចប់ (HH:MM):\nឧទាហរណ៍: 17:30",
-                reply_markup=ReplyKeyboardMarkup(
-                    keyboard=[
-                        [KeyboardButton(text="06:00"), KeyboardButton(text="12:00")],
-                        [KeyboardButton(text="13:30"), KeyboardButton(text="18:00")],
-                        [KeyboardButton(text="00:00"), KeyboardButton(text="23:59")]
-                    ],
-                    resize_keyboard=True,
-                    one_time_keyboard=True
-                )
-            )
-            context.user_data["date_range_stage"] = "end_time"
+    total = 0
+    count = 0
+    if chat_id in message_store:
+        for msg in message_store[chat_id]:
+            if start_dt <= msg["timestamp"] <= end_dt:
+                for num in msg["numbers"]:
+                    try:
+                        total += float(num)
+                        count += 1
+                    except:
+                        pass
 
-        elif stage == "end_time":
-            # Validate time format
-            datetime.strptime(text, "%H:%M")
-            context.user_data["end_time"] = text
-            full_end = f"{context.user_data['end_date']} {text}"
-            context.user_data["full_end"] = datetime.strptime(full_end, "%Y-%m-%d %H:%M").replace(tzinfo=UTC_PLUS_7)
-            
-            # Calculate the sum
-            total = 0
-            count = 0
-            chat_id = update.message.chat_id
-            start_dt = context.user_data["full_start"]
-            end_dt = context.user_data["full_end"]
-            
-            if chat_id in message_store:
-                for msg in message_store[chat_id]:
-                    if start_dt <= msg["timestamp"] <= end_dt:
-                        for num in msg["numbers"]:
-                            try:
-                                total += float(num)
-                                count += 1
-                            except:
-                                pass
+    start_str = start_dt.strftime("%Y-%m-%d %H:%M")
+    end_str = end_dt.strftime("%Y-%m-%d %H:%M")
 
-            start_str = start_dt.strftime("%Y-%m-%d %H:%M")
-            end_str = end_dt.strftime("%Y-%m-%d %H:%M")
+    if count == 0:
+        result = f"🔍 រកមិនឃើញតម្លៃលេខរវាង {start_str} and {end_str}"
+    else:
+        result = (
+            f"📊 *ចន្លោះកាលបរិច្ឆេទ*\n"
+            f"• រយៈពេល: {start_str} to {end_str}\n"
+            f"• សារត្រូវបានយកមកបូក: {count}\n"
+            f"• ផលបូកសរុប: {total:.2f}"
+        )
 
-            if count == 0:
-                result = f"🔍 រកមិនឃើញតម្លៃលេខរវាង {start_str} and {end_str}"
-            else:
-                result = (
-                    f"📊 *ចន្លោះកាលបរិច្ឆេទ*\n"
-                    f"• រយៈពេល: {start_str} to {end_str}\n"
-                    f"• សារត្រូវបានយកមកបូក: {count}\n"
-                    f"• ផលបូកសរុប: {total:.2f}"
-                )
+    await update.message.reply_text(result, parse_mode="Markdown")
+    del context.user_data["awaiting_custom_range"]
 
-            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
-            
-            # Clean up
-            for key in ["date_range_stage", "start_date", "start_time", "full_start", 
-                       "end_date", "end_time", "full_end"]:
-                if key in context.user_data:
-                    del context.user_data[key]
-
-    except ValueError as e:
-        error_msg = ""
-        if "time data" in str(e):
-            if "date" in stage:
-                error_msg = "❌ ទម្រង់ថ្ងៃមិនត្រឹមត្រូវ។ សូមបញ្ចូលជា ឆ្នាំ-ខែ-ថ្ងៃ (ឧទាហរណ៍: 2025-07-15)"
-            else:
-                error_msg = "❌ ទម្រង់ម៉ោងមិនត្រឹមត្រូវ។ សូមបញ្ចូលជា HH:MM (ឧទាហរណ៍: 14:30)"
-        else:
-            error_msg = "❌ ទម្រង់មិនត្រឹមត្រូវ។ សូមព្យាយាមម្តងទៀត។"
-        
-        await update.message.reply_text(error_msg)
-
+# Updated server handler with HEAD support
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -297,8 +193,8 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(CallbackQueryHandler(date_picker_handler, pattern="^start_date_picker$|^end_date_picker$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, store_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_range))
 
     print("Bot is running...")
     app.run_polling()
